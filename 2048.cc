@@ -3,6 +3,7 @@
 #include <vector>
 #include <string>
 #include <set>
+#include <math.h>
 
 using namespace std;
 
@@ -25,7 +26,6 @@ void PrintBoard(const Board& board) {
 
 void GenerateInitialState(Board* board) {
 	const int N = 5;
-	srand(0);
 	int x_max = board->size();
 	int y_max = board->at(0).size();
 	for (int i = 0; i < N; ++i) {
@@ -33,7 +33,8 @@ void GenerateInitialState(Board* board) {
 	}
 }
 
-int& At(Board* board, int i, int j) {
+template<class T>
+T& At(vector<vector<T>>* board, int i, int j) {
 	return board->at(i).at(j);
 }
 
@@ -59,7 +60,7 @@ int ApplyMove(Board* board, Move move, int* score) {
 					++move_count;
 				}
 				// Apply tile collapse.
-				if (k >= 0 && At(board, k, j) == At(board, k + 1, j) && 
+				if (k >= 0 && At(board, k, j) == At(board, k + 1, j) &&
 					merged.find(make_pair(k, j)) == merged.end()) {
 					At(board, k, j) += At(board, k, j);
 					At(board, k + 1, j) = 0;
@@ -70,7 +71,7 @@ int ApplyMove(Board* board, Move move, int* score) {
 			}
 		}
 		break;
-		
+
 		case 's':
 		case 'S':
 		for (int i = x_size - 1; i >= 0; --i) {
@@ -97,7 +98,7 @@ int ApplyMove(Board* board, Move move, int* score) {
 			}
 		}
 		break;
-		
+
 		case 'a':
 		case 'A':
 		for (int j = 0; j < y_size; ++j) {
@@ -124,7 +125,7 @@ int ApplyMove(Board* board, Move move, int* score) {
 			}
 		}
 		break;
-		
+
 		case 'd':
 		case 'D':
 		for (int j = y_size - 1; j >= 0; --j) {
@@ -172,8 +173,9 @@ void AddNewNumbers(Board* board, int N) {
 			if (rand() % zeros.size() < N) {
 				At(board, zeros[i].first, zeros[i].second) = 2;
 				++add_count;
+        if (add_count == N) return;
 			}
-		}		
+		}
 	}
 }
 
@@ -189,58 +191,158 @@ bool IsGameOver(const Board& board) {
 	return true;
 }
 
-int main() {
-	Board board(5, Row(5, 0));
-	
-	GenerateInitialState(&board);
-	printf("Initial board: \n");
-	PrintBoard(board);
+char HumanGetMove(const Board& board) {
+	char c;
 	printf("\n");
-	
-	/*
-	  For testing
-	
-	Board top_board(board), left_board(board), right_board(board), bottom_board(board);
-	int top_board_result = ApplyMove(&top_board, 'w');
-	int left_board_result = ApplyMove(&left_board, 'a');
-	int bottom_board_result = ApplyMove(&bottom_board, 's');
-	int right_board_result = ApplyMove(&right_board, 'd');
-	
-	printf("\nTop Board: %d\n", top_board_result);
-	PrintBoard(top_board);
-	printf("\nLeft Board: %d\n", left_board_result);
-	PrintBoard(left_board);
-	printf("\nRight Board: %d\n", right_board_result);
-	PrintBoard(right_board);
-	printf("\nBottom Board: %d\n", bottom_board_result);
-	PrintBoard(bottom_board);
-	
-	*/
-	
-	int total_score = 0;
-	char c;	
+	PrintBoard(board);
 	printf("Enter move: ");
-	while (scanf(" %c", &c)) {
+	scanf(" %c", &c);
+	return c;
+}
+
+char RandomGetMove(const Board&) {
+	string options = "wasd";
+	return options[rand() % 4];
+}
+
+char WeightedRandomGetMove(const Board&) {
+	int r = rand() % 16;
+	// Tweak these numbers as you wish.
+	if (r < 5) {
+		return 'w';
+	} else if (r < 10) {
+		return 's';
+	} else if (r < 14) {
+		return 'a';
+	} else {
+		return 'd';
+	}
+}
+
+struct Node {
+	vector<float> weights;
+	float value;
+};
+
+vector<vector<Node>> nodes;
+
+void InitRL(int num_rows, int num_cols) {
+	nodes.clear();
+	const int num_layers = 4;
+	nodes.resize(num_layers);
+	nodes[0].resize(num_rows * num_cols);
+	nodes[1].resize(128);
+	nodes[2].resize(128);
+	nodes[3].resize(4);
+
+	// For each layer
+	for (int i = 1; i < num_layers; ++i) {
+		// For each node in layer.
+		for (int j = 0; j < nodes[i].size(); ++j) {
+			nodes[i][j].weights.resize(nodes[i-1].size());
+			// For each weight in node.
+			for (int k = 0; k < nodes[i][j].weights.size(); ++k) {
+				// Initialize randomly in [-1, 1]
+				nodes[i][j].weights[k] = rand() / (RAND_MAX / 2.) - 1;
+			}
+		}
+	}
+}
+
+void EvalRL(const Board& board) {
+	// Copy in board.
+	int index = 0;
+	const int max_value = 4096;
+	for (int i = 0; i < board.size(); ++i) {
+		for (int j = 0; j < board[i].size(); ++j) {
+			nodes[0][index].value = board[i][j] / max_value;
+		}
+	}
+
+	// Evaluate values.
+	for (int i = 1; i < nodes.size(); ++i) {
+		for (int j = 0; j < nodes[i].size(); ++j) {
+			nodes[i][j].value = 0;
+			for (int k = 0; k < nodes[i][j].weights.size(); ++k) {
+				nodes[i][j].value += nodes[i][j].weights[k] * nodes[i-1][k].value;
+			}
+			nodes[i][j].value /= nodes[i][j].weights.size();
+		}
+	}
+
+}
+
+char RLGetMove(const Board& board) {
+	int x_size = board.size();
+	int y_size = board[0].size();
+	float max_value = 4096;
+  vector<float> input_weights(board.size() * board[0].size());
+	for (int i = 0; i < x_size; ++i) {
+		for (int j = 0; j < y_size; ++j) {
+			input_weights[i * x_size + j] = board[i][j] / max_value;
+		}
+	}
+  return 'w';
+}
+
+int Play(Board* board) {
+	int total_score = 0;
+	char c;
+	while ((c = HumanGetMove(*board))) {
 		int score_produced = 0;
-		int result = ApplyMove(&board, c, &score_produced);
+		int result = ApplyMove(board, c, &score_produced);
 		if (result == 0) {
 			printf("Illegal move.\n");
 			goto end;
 		}
 		total_score += score_produced;
 		printf("Scored: %d Total: %d\n", score_produced, total_score);
-		AddNewNumbers(&board, 1);
-		if (IsGameOver(board)) {
+		AddNewNumbers(board, 1);
+		if (IsGameOver(*board)) {
 			printf("Game over!\n");
 			printf("Score: %d\n", total_score);
 			break;
 		}
-		
 	end:
-		printf("\n");
-		PrintBoard(board);
-		printf("Enter move: ");
+		;
 	}
-	
+	return total_score;
+}
+
+int main() {
+	srand(time(0));
+	const int num_rows = 5, num_cols = 5;
+	InitRL(num_rows, num_cols);
+	const int num_games = 100;
+	vector<pair<int, int>> scores;
+	for (int i = 0; i < num_games; ++i) {
+		Board board(num_rows, Row(num_cols, 0));
+		GenerateInitialState(&board);
+		printf("Initial board: \n");
+		PrintBoard(board);
+		printf("\n");
+		int score = Play(&board);
+		int max_value = 0;
+		for (int j = 0; j < board.size(); ++j) {
+			for (int k = 0; k < board[0].size(); ++k) {
+				max_value = max(board[j][k], max_value);
+			}
+		}
+		scores.push_back(make_pair(score, max_value));
+	}
+	sort(scores.begin(), scores.end());
+
+	double mean = 0;
+	double std_dev = 0;
+	printf("\n--- Scores:");
+	for (int i = 0; i < scores.size(); ++i) {
+		mean += scores[i].first;
+		std_dev += (scores[i].first * scores[i].first);
+		printf(" (%d, %d)", scores[i].first, scores[i].second);
+	}
+	printf("\n");
+	mean /= scores.size();
+	std_dev = sqrt((std_dev - mean*mean) / scores.size());
+	printf("Mean: %g Std. Dev: %g\n", mean, std_dev);
 	return 0;
 }
